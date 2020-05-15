@@ -4631,6 +4631,7 @@ const core = __importStar(__webpack_require__(470));
 const installer = __importStar(__webpack_require__(749));
 const auth = __importStar(__webpack_require__(202));
 const path = __importStar(__webpack_require__(622));
+const url_1 = __webpack_require__(835);
 function run() {
     return __awaiter(this, void 0, void 0, function* () {
         try {
@@ -4644,7 +4645,7 @@ function run() {
             }
             console.log(`version: ${version}`);
             if (version) {
-                let token = core.getInput('token');
+                let token = isGhes() ? undefined : core.getInput('token');
                 let stable = (core.getInput('stable') || 'true').toUpperCase() === 'TRUE';
                 yield installer.getNode(version, stable, token);
             }
@@ -4664,6 +4665,10 @@ function run() {
     });
 }
 exports.run = run;
+function isGhes() {
+    const ghUrl = new url_1.URL(process.env['GITHUB_URL'] || 'https://github.com');
+    return ghUrl.hostname.toUpperCase() !== 'GITHUB.COM';
+}
 //# sourceMappingURL=main.js.map
 
 /***/ }),
@@ -12981,7 +12986,6 @@ function getNode(versionSpec, stable, token) {
         let osPlat = os.platform();
         let osArch = translateArchToDistUrl(os.arch());
         // check cache
-        let info = null;
         let toolPath;
         toolPath = tc.find('node', versionSpec);
         // If not found in cache, download
@@ -12990,31 +12994,57 @@ function getNode(versionSpec, stable, token) {
         }
         else {
             console.log(`Attempting to download ${versionSpec}...`);
-            let info = yield getInfoFromManifest(versionSpec, stable, token);
-            if (!info) {
-                console.log('Not found in manifest.  Falling back to download directly from Node');
-                info = yield getInfoFromDist(versionSpec);
-            }
-            if (!info) {
-                throw new Error(`Unable to find Node version '${versionSpec}' for platform ${osPlat} and architecture ${osArch}.`);
-            }
-            console.log(`Acquiring ${info.resolvedVersion} from ${info.downloadUrl}`);
             let downloadPath = '';
+            let info = null;
+            //
+            // Try download from internal distribution (popular versions only)
+            //
             try {
-                downloadPath = yield tc.downloadTool(info.downloadUrl, undefined, token);
+                info = yield getInfoFromManifest(versionSpec, stable, token);
+                if (info) {
+                    console.log(`Acquiring ${info.resolvedVersion} from ${info.downloadUrl}`);
+                    downloadPath = yield tc.downloadTool(info.downloadUrl, undefined, token);
+                }
+                else {
+                    console.log('Not found in manifest.  Falling back to download directly from Node');
+                }
             }
             catch (err) {
-                if (err instanceof tc.HTTPError && err.httpStatusCode == 404) {
-                    yield acquireNodeFromFallbackLocation(info.resolvedVersion);
-                    return;
+                // Rate limited?
+                if (err instanceof tc.HTTPError && err.httpStatusCode === 403) {
+                    console.log('Received HTTP status code 403.  This usually indicates the rate limit has been exceeded');
                 }
-                throw err;
+                else {
+                    console.log(err.message);
+                }
+                core.debug(err.stack);
+                console.log('Falling back to download directly from Node');
+            }
+            //
+            // Download from nodejs.org
+            //
+            if (!downloadPath) {
+                info = yield getInfoFromDist(versionSpec);
+                if (!info) {
+                    throw new Error(`Unable to find Node version '${versionSpec}' for platform ${osPlat} and architecture ${osArch}.`);
+                }
+                console.log(`Acquiring ${info.resolvedVersion} from ${info.downloadUrl}`);
+                try {
+                    downloadPath = yield tc.downloadTool(info.downloadUrl);
+                }
+                catch (err) {
+                    if (err instanceof tc.HTTPError && err.httpStatusCode == 404) {
+                        return yield acquireNodeFromFallbackLocation(info.resolvedVersion);
+                    }
+                    throw err;
+                }
             }
             //
             // Extract
             //
             console.log('Extracting ...');
             let extPath;
+            info = info || {}; // satisfy compiler, never null when reaches here
             if (osPlat == 'win32') {
                 let _7zPath = path.join(__dirname, '..', 'externals', '7zr.exe');
                 extPath = yield tc.extract7z(downloadPath, undefined, _7zPath);
@@ -13055,7 +13085,7 @@ exports.getNode = getNode;
 function getInfoFromManifest(versionSpec, stable, token) {
     return __awaiter(this, void 0, void 0, function* () {
         let info = null;
-        const releases = yield tc.getManifestFromRepo('actions', 'node-versions', token);
+        const releases = yield tc.getManifestFromRepo('actions', 'node-versions', token || '');
         console.log(`matching ${versionSpec}...`);
         const rel = yield tc.findFromManifest(versionSpec, stable, releases);
         if (rel && rel.files.length > 0) {
@@ -13063,7 +13093,6 @@ function getInfoFromManifest(versionSpec, stable, token) {
             info.resolvedVersion = rel.version;
             info.downloadUrl = rel.files[0].download_url;
             info.fileName = rel.files[0].filename;
-            info.token = token;
         }
         return info;
     });
@@ -13072,7 +13101,6 @@ function getInfoFromDist(versionSpec) {
     return __awaiter(this, void 0, void 0, function* () {
         let osPlat = os.platform();
         let osArch = translateArchToDistUrl(os.arch());
-        let info = null;
         let version;
         version = yield queryDistForMatch(versionSpec);
         if (!version) {
