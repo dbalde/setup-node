@@ -10959,6 +10959,7 @@ function downloadToolAttempt(url, dest, auth) {
       });
       let headers;
       if (auth) {
+          core.debug('set auth');
           headers = {
               authorization: auth
           };
@@ -11304,7 +11305,8 @@ function getManifestFromRepo(owner, repo, auth, branch = 'master') {
       const http = new httpm.HttpClient('tool-cache');
       const headers = {};
       if (auth) {
-          headers.authorization = auth;
+        core.debug('set auth');
+        headers.authorization = auth;
       }
       const response = yield http.getJson(treeUrl, headers);
       if (!response.result) {
