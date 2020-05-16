@@ -17,9 +17,10 @@ export async function run() {
 
     console.log(`version: ${version}`);
     if (version) {
-      let token = isGhes() ? undefined : core.getInput('token');
+      let token = core.getInput('token');
+      let auth = !token || isGhes() ? undefined : `token ${token}`;
       let stable = (core.getInput('stable') || 'true').toUpperCase() === 'TRUE';
-      await installer.getNode(version, stable, token);
+      await installer.getNode(version, stable, auth);
     }
 
     const registryUrl: string = core.getInput('registry-url');

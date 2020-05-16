@@ -26,7 +26,7 @@ interface INodeVersionInfo {
 export async function getNode(
   versionSpec: string,
   stable: boolean,
-  token: string | undefined
+  auth: string | undefined
 ) {
   let osPlat: string = os.platform();
   let osArch: string = translateArchToDistUrl(os.arch());
@@ -47,23 +47,19 @@ export async function getNode(
     // Try download from internal distribution (popular versions only)
     //
     try {
-      info = await getInfoFromManifest(versionSpec, stable, token);
+      info = await getInfoFromManifest(versionSpec, stable, auth);
       if (info) {
         console.log(
           `Acquiring ${info.resolvedVersion} from ${info.downloadUrl}`
         );
-        downloadPath = await tc.downloadTool(
-          info.downloadUrl,
-          undefined,
-          token
-        );
+        downloadPath = await tc.downloadTool(info.downloadUrl, undefined, auth);
       } else {
         console.log(
           'Not found in manifest.  Falling back to download directly from Node'
         );
       }
     } catch (err) {
-      // Rate limited?
+      // Rate limit?
       if (err instanceof tc.HTTPError && err.httpStatusCode === 403) {
         console.log(
           'Received HTTP status code 403.  This usually indicates the rate limit has been exceeded'
@@ -145,13 +141,13 @@ export async function getNode(
 async function getInfoFromManifest(
   versionSpec: string,
   stable: boolean,
-  token: string | undefined
+  auth: string | undefined
 ): Promise<INodeVersionInfo | null> {
   let info: INodeVersionInfo | null = null;
   const releases = await tc.getManifestFromRepo(
     'actions',
     'node-versions',
-    token || ''
+    auth || ''
   );
   console.log(`matching ${versionSpec}...`);
   const rel = await tc.findFromManifest(versionSpec, stable, releases);

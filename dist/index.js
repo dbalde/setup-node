@@ -4645,9 +4645,10 @@ function run() {
             }
             console.log(`version: ${version}`);
             if (version) {
-                let token = isGhes() ? undefined : core.getInput('token');
+                let token = core.getInput('token');
+                let auth = !token || isGhes() ? undefined : `token ${token}`;
                 let stable = (core.getInput('stable') || 'true').toUpperCase() === 'TRUE';
-                yield installer.getNode(version, stable, token);
+                yield installer.getNode(version, stable, auth);
             }
             const registryUrl = core.getInput('registry-url');
             const alwaysAuth = core.getInput('always-auth');
@@ -10917,80 +10918,81 @@ const userAgent = 'actions/tool-cache';
  *
  * @param url       url of tool to download
  * @param dest      path to download tool
+ * @param auth      authorization header
  * @returns         path to downloaded tool
  */
-function downloadTool(url, dest, token) {
-    return __awaiter(this, void 0, void 0, function* () {
-        dest = dest || path.join(_getTempDirectory(), v4_1.default());
-        yield io.mkdirP(path.dirname(dest));
-        core.debug(`Downloading ${url}`);
-        core.debug(`Destination ${dest}`);
-        const maxAttempts = 3;
-        const minSeconds = _getGlobal('TEST_DOWNLOAD_TOOL_RETRY_MIN_SECONDS', 10);
-        const maxSeconds = _getGlobal('TEST_DOWNLOAD_TOOL_RETRY_MAX_SECONDS', 20);
-        const retryHelper = new retry_helper_1.RetryHelper(maxAttempts, minSeconds, maxSeconds);
-        return yield retryHelper.execute(() => __awaiter(this, void 0, void 0, function* () {
-            return yield downloadToolAttempt(url, dest || '', token);
-        }), (err) => {
-            if (err instanceof HTTPError && err.httpStatusCode) {
-                // Don't retry anything less than 500, except 408 Request Timeout and 429 Too Many Requests
-                if (err.httpStatusCode < 500 &&
-                    err.httpStatusCode !== 408 &&
-                    err.httpStatusCode !== 429) {
-                    return false;
-                }
-            }
-            // Otherwise retry
-            return true;
-        });
-    });
+function downloadTool(url, dest, auth) {
+  return __awaiter(this, void 0, void 0, function* () {
+      dest = dest || path.join(_getTempDirectory(), v4_1.default());
+      yield io.mkdirP(path.dirname(dest));
+      core.debug(`Downloading ${url}`);
+      core.debug(`Destination ${dest}`);
+      const maxAttempts = 3;
+      const minSeconds = _getGlobal('TEST_DOWNLOAD_TOOL_RETRY_MIN_SECONDS', 10);
+      const maxSeconds = _getGlobal('TEST_DOWNLOAD_TOOL_RETRY_MAX_SECONDS', 20);
+      const retryHelper = new retry_helper_1.RetryHelper(maxAttempts, minSeconds, maxSeconds);
+      return yield retryHelper.execute(() => __awaiter(this, void 0, void 0, function* () {
+          return yield downloadToolAttempt(url, dest || '', auth);
+      }), (err) => {
+          if (err instanceof HTTPError && err.httpStatusCode) {
+              // Don't retry anything less than 500, except 408 Request Timeout and 429 Too Many Requests
+              if (err.httpStatusCode < 500 &&
+                  err.httpStatusCode !== 408 &&
+                  err.httpStatusCode !== 429) {
+                  return false;
+              }
+          }
+          // Otherwise retry
+          return true;
+      });
+  });
 }
 exports.downloadTool = downloadTool;
-function downloadToolAttempt(url, dest, token) {
-    return __awaiter(this, void 0, void 0, function* () {
-        if (fs.existsSync(dest)) {
-            throw new Error(`Destination file path ${dest} already exists`);
-        }
-        // Get the response headers
-        const http = new httpm.HttpClient(userAgent, [], {
-            allowRetries: false
-        });
-        let headers;
-        if (token) {
-            headers = {
-                authorization: `token ${token}`
-            };
-        }
-        const response = yield http.get(url, headers);
-        if (response.message.statusCode !== 200) {
-            const err = new HTTPError(response.message.statusCode);
-            core.debug(`Failed to download from "${url}". Code(${response.message.statusCode}) Message(${response.message.statusMessage})`);
-            throw err;
-        }
-        // Download the response body
-        const pipeline = util.promisify(stream.pipeline);
-        const responseMessageFactory = _getGlobal('TEST_DOWNLOAD_TOOL_RESPONSE_MESSAGE_FACTORY', () => response.message);
-        const readStream = responseMessageFactory();
-        let succeeded = false;
-        try {
-            yield pipeline(readStream, fs.createWriteStream(dest));
-            core.debug('download complete');
-            succeeded = true;
-            return dest;
-        }
-        finally {
-            // Error, delete dest before retry
-            if (!succeeded) {
-                core.debug('download failed');
-                try {
-                    yield io.rmRF(dest);
-                }
-                catch (err) {
-                    core.debug(`Failed to delete '${dest}'. ${err.message}`);
-                }
-            }
-        }
-    });
+function downloadToolAttempt(url, dest, auth) {
+  return __awaiter(this, void 0, void 0, function* () {
+      if (fs.existsSync(dest)) {
+          throw new Error(`Destination file path ${dest} already exists`);
+      }
+      // Get the response headers
+      const http = new httpm.HttpClient(userAgent, [], {
+          allowRetries: false
+      });
+      let headers;
+      if (auth) {
+          headers = {
+              authorization: auth
+          };
+      }
+      const response = yield http.get(url, headers);
+      if (response.message.statusCode !== 200) {
+          const err = new HTTPError(response.message.statusCode);
+          core.debug(`Failed to download from "${url}". Code(${response.message.statusCode}) Message(${response.message.statusMessage})`);
+          throw err;
+      }
+      // Download the response body
+      const pipeline = util.promisify(stream.pipeline);
+      const responseMessageFactory = _getGlobal('TEST_DOWNLOAD_TOOL_RESPONSE_MESSAGE_FACTORY', () => response.message);
+      const readStream = responseMessageFactory();
+      let succeeded = false;
+      try {
+          yield pipeline(readStream, fs.createWriteStream(dest));
+          core.debug('download complete');
+          succeeded = true;
+          return dest;
+      }
+      finally {
+          // Error, delete dest before retry
+          if (!succeeded) {
+              core.debug('download failed');
+              try {
+                  yield io.rmRF(dest);
+              }
+              catch (err) {
+                  core.debug(`Failed to delete '${dest}'. ${err.message}`);
+              }
+          }
+      }
+  });
 }
 /**
  * Extract a .7z file
@@ -11295,39 +11297,40 @@ function findAllVersions(toolName, arch) {
     return versions;
 }
 exports.findAllVersions = findAllVersions;
-function getManifestFromRepo(owner, repo, token, branch = 'master') {
-    return __awaiter(this, void 0, void 0, function* () {
-        let releases = [];
-        const treeUrl = `https://api.github.com/repos/${owner}/${repo}/git/trees/${branch}`;
-        const http = new httpm.HttpClient('tool-cache');
-        const headers = {
-            authorization: `token ${token}`
-        };
-        const response = yield http.getJson(treeUrl, headers);
-        if (!response.result) {
-            return releases;
-        }
-        let manifestUrl = '';
-        for (const item of response.result.tree) {
-            if (item.path === 'versions-manifest.json') {
-                manifestUrl = item.url;
-                break;
-            }
-        }
-        headers['accept'] = 'application/vnd.github.VERSION.raw';
-        let versionsRaw = yield (yield http.get(manifestUrl, headers)).readBody();
-        if (versionsRaw) {
-            // shouldn't be needed but protects against invalid json saved with BOM
-            versionsRaw = versionsRaw.replace(/^\uFEFF/, '');
-            try {
-                releases = JSON.parse(versionsRaw);
-            }
-            catch (_a) {
-                core.debug('Invalid json');
-            }
-        }
-        return releases;
-    });
+function getManifestFromRepo(owner, repo, auth, branch = 'master') {
+  return __awaiter(this, void 0, void 0, function* () {
+      let releases = [];
+      const treeUrl = `https://api.github.com/repos/${owner}/${repo}/git/trees/${branch}`;
+      const http = new httpm.HttpClient('tool-cache');
+      let headers = {};
+      if (auth) {
+          headers.authorization = auth;
+      }
+      const response = yield http.getJson(treeUrl, headers);
+      if (!response.result) {
+          return releases;
+      }
+      let manifestUrl = '';
+      for (const item of response.result.tree) {
+          if (item.path === 'versions-manifest.json') {
+              manifestUrl = item.url;
+              break;
+          }
+      }
+      headers['accept'] = 'application/vnd.github.VERSION.raw';
+      let versionsRaw = yield (yield http.get(manifestUrl, headers)).readBody();
+      if (versionsRaw) {
+          // shouldn't be needed but protects against invalid json saved with BOM
+          versionsRaw = versionsRaw.replace(/^\uFEFF/, '');
+          try {
+              releases = JSON.parse(versionsRaw);
+          }
+          catch (_a) {
+              core.debug('Invalid json');
+          }
+      }
+      return releases;
+  });
 }
 exports.getManifestFromRepo = getManifestFromRepo;
 function findFromManifest(versionSpec, stable, manifest, archFilter = os.arch()) {
@@ -12981,7 +12984,7 @@ const tc = __importStar(__webpack_require__(533));
 const path = __importStar(__webpack_require__(622));
 const semver = __importStar(__webpack_require__(280));
 const fs = __webpack_require__(747);
-function getNode(versionSpec, stable, token) {
+function getNode(versionSpec, stable, auth) {
     return __awaiter(this, void 0, void 0, function* () {
         let osPlat = os.platform();
         let osArch = translateArchToDistUrl(os.arch());
@@ -13000,17 +13003,17 @@ function getNode(versionSpec, stable, token) {
             // Try download from internal distribution (popular versions only)
             //
             try {
-                info = yield getInfoFromManifest(versionSpec, stable, token);
+                info = yield getInfoFromManifest(versionSpec, stable, auth);
                 if (info) {
                     console.log(`Acquiring ${info.resolvedVersion} from ${info.downloadUrl}`);
-                    downloadPath = yield tc.downloadTool(info.downloadUrl, undefined, token);
+                    downloadPath = yield tc.downloadTool(info.downloadUrl, undefined, auth);
                 }
                 else {
                     console.log('Not found in manifest.  Falling back to download directly from Node');
                 }
             }
             catch (err) {
-                // Rate limited?
+                // Rate limit?
                 if (err instanceof tc.HTTPError && err.httpStatusCode === 403) {
                     console.log('Received HTTP status code 403.  This usually indicates the rate limit has been exceeded');
                 }
@@ -13082,10 +13085,10 @@ function getNode(versionSpec, stable, token) {
     });
 }
 exports.getNode = getNode;
-function getInfoFromManifest(versionSpec, stable, token) {
+function getInfoFromManifest(versionSpec, stable, auth) {
     return __awaiter(this, void 0, void 0, function* () {
         let info = null;
-        const releases = yield tc.getManifestFromRepo('actions', 'node-versions', token || '');
+        const releases = yield tc.getManifestFromRepo('actions', 'node-versions', auth || '');
         console.log(`matching ${versionSpec}...`);
         const rel = yield tc.findFromManifest(versionSpec, stable, releases);
         if (rel && rel.files.length > 0) {
