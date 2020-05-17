@@ -4667,7 +4667,7 @@ function run() {
 }
 exports.run = run;
 function isGhes() {
-    const ghUrl = new url_1.URL(process.env['GITHUB_URL'] || 'https://github.com');
+    const ghUrl = new url_1.URL(process.env['GITHUB_SERVER_URL'] || 'https://github.com');
     return ghUrl.hostname.toUpperCase() !== 'GITHUB.COM';
 }
 //# sourceMappingURL=main.js.map

@@ -43,6 +43,8 @@ export async function run() {
 }
 
 function isGhes(): boolean {
-  const ghUrl = new URL(process.env['GITHUB_URL'] || 'https://github.com');
+  const ghUrl = new URL(
+    process.env['GITHUB_SERVER_URL'] || 'https://github.com'
+  );
   return ghUrl.hostname.toUpperCase() !== 'GITHUB.COM';
 }
